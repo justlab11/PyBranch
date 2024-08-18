@@ -4,7 +4,7 @@ from typing import *
 import os
 import glob
 from custom_types import *
-
+import click
 
 def get_alias(node: Node, folder: str):
     filename = node.content.split(" ")[1]
@@ -65,9 +65,6 @@ def dict_to_node(data: Dict[str, Any]) -> Node:
         node.children.append(child_node)
     
     return node
-
-
-
 
 def parse_python_to_nodes(script_folder, script_name, output_folder="nodes"):
     script_path = os.path.join(script_folder, script_name)
@@ -257,13 +254,17 @@ def collect_functions_and_classes(output_folder):
 
     return functions_dict
 
-
+@click.command()
+@click.option('-p', '--script_path', type=str)
+@click.option('-p', '--script_name', type=str)
 def main(script_path, script_name):
     parse_python_to_nodes(script_path, script_name, output_folder="nodes")
     x = collect_functions_and_classes(output_folder="nodes")
     for key in x.keys():
         print(key, x[key])
 
-script_path = 'C:/Users/justl/Documents/folder'
-script_name = "main.py"
-root = main(script_path, script_name)
+
+if __name__ == "__main__":
+    main()
+
+
