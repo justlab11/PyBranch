@@ -1,4 +1,5 @@
 nodes
 venv
-test
+test.ipynb
 __pycache__
+test_folder

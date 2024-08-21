@@ -227,12 +227,6 @@ def collect_functions_and_classes(output_folder):
 
         # Recursive function to traverse the nodes
         def traverse_nodes(node):
-            # Add functions
-            if node.type == 'function':
-                method_name_start = node.content.split()[1]
-                method_name = method_name_start.split("(")[0]
-                function_list.append(method_name)  # Get the function name
-
             # Add class methods
             if node.type == 'class':
                 class_name = node.content.split()[1].split(':')[0]  # Get the class name
@@ -241,6 +235,19 @@ def collect_functions_and_classes(output_folder):
                         method_name_start = child.content.split()[1]  # Get the method name
                         method_name = method_name_start.split("(")[0]
                         function_list.append(f"{class_name}.{method_name}")
+
+            # Add standalone functions
+            elif node.type == 'function':
+                method_name_start = node.content.split()[1]
+                method_name = method_name_start.split("(")[0]
+                for function in function_list:
+                    func_sects = function.split(".")
+                    print(func_sects, method_name, method_name in func_sects)
+                    if method_name in func_sects:
+                        break
+                    else:
+                        function_list.append(method_name)  # Get the function name
+                        break
 
             # Traverse children
             for child in node.children:
