@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Call graph</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --border: #d8d8d2; --text: #1f2328; --muted: #6b7078;
+    --edge: #9aa0a8; --accent: #2563eb; --accent-bg: #dbe7ff; --module: #8a5a00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c; --panel: #1f2227; --border: #343942; --text: #e6e8eb; --muted: #8b919b;
+      --edge: #5b626c; --accent: #6ea0ff; --accent-bg: #26364f; --module: #e0b050;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.4 system-ui, sans-serif; }
+  header { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; gap: 16px; flex-wrap: wrap; align-items: baseline; }
+  header h1 { font-size: 15px; margin: 0; }
+  header span { color: var(--muted); }
+  #canvas { overflow: auto; height: calc(100vh - 90px); }
+  #hint { padding: 6px 16px; color: var(--muted); font-size: 12px; }
+  svg text { font: 12px ui-monospace, Consolas, monospace; fill: var(--text); }
+  .file rect.box { fill: var(--panel); stroke: var(--border); }
+  .file .title { font-weight: 600; fill: var(--muted); }
+  .node rect { fill: transparent; }
+  .node:hover rect, .node.hl rect { fill: var(--accent-bg); }
+  .node.entry text { font-weight: 700; }
+  .node.module text { fill: var(--module); font-style: italic; }
+  .edge path { fill: none; stroke: var(--edge); stroke-width: 1.2; }
+  .edge.hl path { stroke: var(--accent); stroke-width: 2; }
+  svg.focus .edge:not(.hl) { opacity: .08; }
+  svg.focus .node:not(.hl) { opacity: .35; }
+  marker path { fill: var(--edge); }
+  .node { cursor: pointer; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Call graph</h1>
+  <span id="meta"></span>
+</header>
+<div id="hint">Hover a function to highlight what it calls and what calls it. Click to pin the selection; click empty space to clear.</div>
+<div id="canvas"><svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg></div>
+<script>
+const DATA = /*DATA*/null;
+
+const NS = "http://www.w3.org/2000/svg";
+const COL_W = 270, GAP = 150, ROW = 24, HEAD = 30, PAD = 10, VGAP = 24, MARGIN = 20;
+const svg = document.getElementById("svg");
+
+function el(name, attrs, parent) {
+  const e = document.createElementNS(NS, name);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+// ---- assign files to columns by BFS distance from the entry file ----
+const fileOf = id => id.split("::")[0];
+const files = DATA.files;
+const byPath = Object.fromEntries(files.map(f => [f.path, f]));
+const fileAdj = {};
+DATA.edges.forEach(e => {
+  const a = fileOf(e.from), b = fileOf(e.to);
+  if (a !== b) (fileAdj[a] = fileAdj[a] || new Set()).add(b);
+});
+const depth = {};
+const order = [];
+const queue = [DATA.entry];
+depth[DATA.entry] = 0;
+while (queue.length) {
+  const f = queue.shift();
+  order.push(f);
+  for (const n of (fileAdj[f] || [])) if (!(n in depth)) { depth[n] = depth[f] + 1; queue.push(n); }
+}
+const maxDepth = Math.max(0, ...Object.values(depth));
+files.forEach(f => { if (!(f.path in depth)) { depth[f.path] = maxDepth + 1; order.push(f.path); } });
+
+// ---- layout ----
+const pos = {};      // node id -> {x, y, col}
+const columnY = {};
+const boxes = [];
+order.forEach(path => {
+  const f = byPath[path];
+  if (!f || !f.nodes.length) return;
+  const col = depth[path];
+  const x = MARGIN + col * (COL_W + GAP);
+  const y = columnY[col] ?? MARGIN;
+  const h = HEAD + f.nodes.length * ROW + PAD;
+  boxes.push({ f, x, y, h });
+  f.nodes.forEach((n, i) => { pos[n.id] = { x, y: y + HEAD + i * ROW + ROW / 2, col }; });
+  columnY[col] = y + h + VGAP;
+});
+const totalW = MARGIN * 2 + (Math.max(...Object.values(depth)) + 1) * (COL_W + GAP);
+const totalH = MARGIN + Math.max(0, ...Object.values(columnY));
+svg.setAttribute("width", totalW);
+svg.setAttribute("height", totalH);
+
+// arrow marker
+const defs = el("defs", {}, svg);
+const marker = el("marker", { id: "arr", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" }, defs);
+el("path", { d: "M0,0 L10,5 L0,10 z" }, marker);
+
+// ---- draw files and nodes ----
+const edgeLayer = el("g", {}, svg);
+const nodeEls = {};
+boxes.forEach(({ f, x, y, h }) => {
+  const g = el("g", { class: "file" }, svg);
+  el("rect", { class: "box", x, y, width: COL_W, height: h, rx: 8 }, g);
+  const t = el("text", { class: "title", x: x + PAD, y: y + 20 }, g);
+  t.textContent = f.path;
+  f.nodes.forEach(n => {
+    const p = pos[n.id];
+    const cls = ["node"];
+    if (n.type === "module") cls.push("module");
+    if (n.id === DATA.entry + "::<module>") cls.push("entry");
+    const ng = el("g", { class: cls.join(" "), "data-id": n.id }, svg);
+    el("rect", { x: x + 4, y: p.y - ROW / 2, width: COL_W - 8, height: ROW, rx: 4 }, ng);
+    const label = el("text", { x: x + PAD, y: p.y + 4 }, ng);
+    label.textContent = n.label;
+    const title = el("title", {}, ng);
+    title.textContent = f.path + (n.line ? ":" + n.line : "") + "  " + n.id.split("::")[1];
+    nodeEls[n.id] = ng;
+  });
+});
+
+// ---- draw edges ----
+const edgeEls = [];
+DATA.edges.forEach(e => {
+  const a = pos[e.from], b = pos[e.to];
+  if (!a || !b) return;
+  let x1, x2, c1, c2;
+  if (b.col > a.col) { x1 = a.x + COL_W; x2 = b.x; c1 = x1 + GAP / 2; c2 = x2 - GAP / 2; }
+  else if (b.col < a.col) { x1 = a.x; x2 = b.x + COL_W; c1 = x1 - GAP / 2; c2 = x2 + GAP / 2; }
+  else { x1 = a.x + COL_W; x2 = b.x + COL_W; c1 = x1 + 50; c2 = x2 + 50; }
+  const g = el("g", { class: "edge" }, edgeLayer);
+  el("path", { d: `M${x1},${a.y} C${c1},${a.y} ${c2},${b.y} ${x2},${b.y}`, "marker-end": "url(#arr)" }, g);
+  const t = el("title", {}, g);
+  t.textContent = `${e.from.split("::")[1]} -> ${e.to.split("::")[1]} (line ${e.line})`;
+  edgeEls.push({ g, e });
+});
+
+// ---- interaction ----
+let pinned = null;
+function focus(id) {
+  svg.classList.toggle("focus", !!id);
+  Object.values(nodeEls).forEach(n => n.classList.remove("hl"));
+  edgeEls.forEach(({ g }) => g.classList.remove("hl"));
+  if (!id) return;
+  nodeEls[id].classList.add("hl");
+  edgeEls.forEach(({ g, e }) => {
+    if (e.from === id || e.to === id) {
+      g.classList.add("hl");
+      nodeEls[e.from]?.classList.add("hl");
+      nodeEls[e.to]?.classList.add("hl");
+    }
+  });
+}
+Object.entries(nodeEls).forEach(([id, n]) => {
+  n.addEventListener("mouseenter", () => { if (!pinned) focus(id); });
+  n.addEventListener("mouseleave", () => { if (!pinned) focus(null); });
+  n.addEventListener("click", ev => {
+    ev.stopPropagation();
+    pinned = pinned === id ? null : id;
+    focus(pinned);
+  });
+});
+svg.addEventListener("click", () => { pinned = null; focus(null); });
+
+document.getElementById("meta").textContent =
+  `entry: ${DATA.entry} · ${files.length} files · ${DATA.edges.length} calls`;
+</script>
+</body>
+</html>
